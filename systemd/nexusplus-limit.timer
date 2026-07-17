@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconcile NexusPlus SSH connection limits
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

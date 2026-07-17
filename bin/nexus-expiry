@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /opt/nexusplus/lib/common.sh
+source /opt/nexusplus/lib/users.sh
+clean_expired --quiet

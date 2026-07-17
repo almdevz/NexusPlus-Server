@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+import argparse, json, os, sys, tempfile
+from pathlib import Path
+
+ENTRY_NAME='NEXUS SSH_XHTTP'
+
+def die(m): print('[ERRO] '+m,file=sys.stderr); raise SystemExit(1)
+p=argparse.ArgumentParser(description='Gera config_ssh_xhttp_unsigned.json a partir do JSON Nexus Connect')
+p.add_argument('--input',required=True);p.add_argument('--output',required=True)
+p.add_argument('--server',default='IP_OU_DOMINIO_XHTTP');p.add_argument('--host',default='DOMINIO_XHTTP')
+p.add_argument('--port',type=int,default=8443);p.add_argument('--base-path',default='/nexus-xhttp/v1')
+a=p.parse_args()
+if not 1<=a.port<=65535: die('porta inválida')
+if not a.base_path.startswith('/') or '..' in a.base_path: die('base path inválido')
+src=Path(a.input);out=Path(a.output)
+try: data=json.loads(src.read_text(encoding='utf-8'))
+except Exception as e: die(f'JSON de entrada inválido: {e}')
+if not isinstance(data,dict) or not isinstance(data.get('Networks'),list) or not isinstance(data.get('Servers'),list): die('estrutura Servers/Networks ausente')
+entry={
+ 'Name':ENTRY_NAME,'FLAG':'br.png','payload':'','sni':a.host,'proxy_ip':a.server,'proxyport':'','tlsport':str(a.port),
+ 'connection_type':'ssh_xhttp','xhttp_host':a.host,'xhttp_base_path':a.base_path,'xhttp_tls':True,
+ 'xhttp_protocol_version':1,'xhttp_connect_timeout_ms':15000,'xhttp_header_timeout_ms':15000,
+ 'xhttp_write_timeout_ms':30000,'xhttp_idle_timeout_ms':120000
+}
+data['Networks']=[n for n in data['Networks'] if not (isinstance(n,dict) and (n.get('connection_type')=='ssh_xhttp' or n.get('Name')==ENTRY_NAME))]
+data['Networks'].append(entry)
+data['ConfigSignature']=''
+out.parent.mkdir(parents=True,exist_ok=True)
+fd,tmp=tempfile.mkstemp(prefix='.xhttp-config-',dir=str(out.parent));os.close(fd)
+Path(tmp).write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');os.chmod(tmp,0o600);os.replace(tmp,out)
+print(f'[OK] Gerado: {out}')
+print(f'[INFO] Servers preservados: {len(data["Servers"])}')
+print(f'[INFO] Networks finais: {len(data["Networks"])}')
+print('[AVISO] ConfigSignature foi esvaziada. Assine com o Nexus JSON Signer antes de publicar.')

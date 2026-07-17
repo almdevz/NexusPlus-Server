@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+CONFIG=${DNSTT_CONFIG:-/etc/nexus-dnstt/server.json}
+ACTION=${1:-status}
+[[ -r "$CONFIG" ]] || exit 0
+command -v jq >/dev/null || exit 1
+ENABLED=$(jq -r '.firewall_redirect // true' "$CONFIG")
+PUBLIC=$(jq -r '.public_udp_port // 53' "$CONFIG")
+LISTEN=$(jq -r '.listen_udp // "0.0.0.0:5300"' "$CONFIG")
+INTERNAL=${LISTEN##*:}; INTERNAL=${INTERNAL%]}
+[[ "$ENABLED" == true ]] || exit 0
+[[ "$PUBLIC" =~ ^[0-9]+$ && "$INTERNAL" =~ ^[0-9]+$ ]] || exit 1
+((PUBLIC>=1 && PUBLIC<=65535 && INTERNAL>=1 && INTERNAL<=65535)) || exit 1
+[[ "$PUBLIC" != "$INTERNAL" ]] || exit 0
+command -v iptables >/dev/null || { echo 'iptables ausente' >&2; exit 1; }
+RULE=(-p udp --dport "$PUBLIC" -m comment --comment nexus-dnstt -j REDIRECT --to-ports "$INTERNAL")
+case "$ACTION" in
+  apply)
+    iptables -t nat -C PREROUTING "${RULE[@]}" 2>/dev/null || iptables -t nat -I PREROUTING 1 "${RULE[@]}"
+    ;;
+  remove)
+    while iptables -t nat -C PREROUTING "${RULE[@]}" 2>/dev/null; do iptables -t nat -D PREROUTING "${RULE[@]}"; done
+    ;;
+  status)
+    iptables -t nat -C PREROUTING "${RULE[@]}" 2>/dev/null
+    ;;
+  *) echo 'Uso: nexus-dnstt-firewall apply|remove|status' >&2; exit 2;;
+esac

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+CONFIG=${1:-/etc/nexus-xhttp/server.json}
+[[ -r "$CONFIG" ]] || { echo '{"status":"error","error":"config_unreadable"}'; exit 2; }
+command -v jq >/dev/null || { echo '{"status":"error","error":"jq_missing"}'; exit 2; }
+command -v curl >/dev/null || { echo '{"status":"error","error":"curl_missing"}'; exit 2; }
+host=$(jq -r '.public_host // empty' "$CONFIG")
+port=$(jq -r '.listen_port // empty' "$CONFIG")
+base=$(jq -r '.base_path // "/nexus-xhttp/v1"' "$CONFIG")
+cert=$(jq -r '.tls_cert // empty' "$CONFIG")
+[[ -n "$host" && "$port" =~ ^[0-9]+$ && -r "$cert" ]] || { echo '{"status":"error","error":"health_config_incomplete"}'; exit 2; }
+url="https://${host}:${port}${base%/}/health"
+response=$(curl --silent --show-error --fail --proto '=https' --tlsv1.2 \
+  --connect-timeout 5 --max-time 10 --cacert "$cert" --resolve "${host}:${port}:127.0.0.1" "$url") || {
+  echo '{"status":"error","error":"health_request_failed"}'; exit 1;
+}
+echo "$response" | jq -e '.status=="ok" and .protocol_version==1' >/dev/null || { echo "$response"; exit 1; }
+echo "$response"

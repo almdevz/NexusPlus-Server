@@ -1,0 +1,31 @@
+[Unit]
+Description=Nexus DNSTT Server (optional module)
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-dnstt
+Group=nexus-dnstt
+ExecStartPre=+/opt/nexusplus/dnstt/nexus-dnstt-firewall apply
+ExecStart=/opt/nexusplus/dnstt/run-server
+ExecStopPost=+/opt/nexusplus/dnstt/nexus-dnstt-firewall remove
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/nexus-dnstt /usr/local/lib/nexus-dnstt
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

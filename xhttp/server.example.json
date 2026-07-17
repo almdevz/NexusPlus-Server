@@ -1,0 +1,17 @@
+{
+  "listen_host": "0.0.0.0",
+  "listen_port": 8443,
+  "public_host": "xhttp.example.com",
+  "tls_cert": "/etc/nexus-xhttp/cert.pem",
+  "tls_key": "/etc/nexus-xhttp/key.pem",
+  "base_path": "/nexus-xhttp/v1",
+  "allowed_targets": [
+    "127.0.0.1:22"
+  ],
+  "session_expires_seconds": 120,
+  "idle_timeout_seconds": 120,
+  "backend_connect_timeout_ms": 15000,
+  "max_sessions": 1000,
+  "max_sessions_per_ip": 20,
+  "max_session_json_bytes": 65536
+}

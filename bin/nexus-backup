@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Selective, integrity-checked backup/restore for NexusPlus Server."""
+from __future__ import annotations
+import argparse, datetime as dt, hashlib, json, os, pwd, grp, shutil, subprocess, sys, tarfile, tempfile
+from pathlib import Path
+
+FORMAT_VERSION = 2
+NP_ETC = Path(os.environ.get("NP_ETC", "/etc/nexusplus"))
+NP_VAR = Path(os.environ.get("NP_VAR", "/var/lib/nexusplus"))
+XHTTP_ETC = Path(os.environ.get("XHTTP_ETC", "/etc/nexus-xhttp"))
+DNSTT_ETC = Path(os.environ.get("DNSTT_ETC", "/etc/nexus-dnstt"))
+DNSTT_LIB = Path(os.environ.get("DNSTT_LIB", "/usr/local/lib/nexus-dnstt"))
+DNSTT_SERVICE = Path(os.environ.get("DNSTT_SERVICE", "/etc/systemd/system/nexus-dnstt.service"))
+ROLLBACK_DIR = NP_VAR / "restore-rollback"
+VALID_COMPONENTS = {"users", "panel", "xhttp", "dnstt", "system"}
+
+
+def die(msg: str) -> None:
+    print(f"[ERRO] {msg}", file=sys.stderr); raise SystemExit(1)
+
+def sha256(path: Path) -> str:
+    h=hashlib.sha256()
+    with path.open('rb') as f:
+        for b in iter(lambda:f.read(1024*1024), b''): h.update(b)
+    return h.hexdigest()
+
+def safe_copy_tree(src: Path, dst: Path) -> None:
+    if not src.exists(): return
+    for p in src.rglob('*'):
+        rel=p.relative_to(src)
+        if p.is_symlink(): die(f"link simbólico recusado no backup: {p}")
+        out=dst/rel
+        if p.is_dir(): out.mkdir(parents=True, exist_ok=True)
+        elif p.is_file():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p,out)
+        else: die(f"tipo especial recusado: {p}")
+
+def read_shadow_hash(user: str) -> str:
+    try:
+        with open('/etc/shadow', encoding='utf-8') as f:
+            for line in f:
+                parts=line.rstrip('\n').split(':')
+                if parts and parts[0]==user: return parts[1]
+    except PermissionError: die('execute como root para ler /etc/shadow')
+    return ''
+
+def parse_users_db() -> list[dict]:
+    db=NP_ETC/'users.db'; limits={}; expiry={}
+    for path,target in [(NP_ETC/'limits.conf',limits),(NP_ETC/'expiry.conf',expiry)]:
+        if path.exists():
+            for line in path.read_text(errors='replace').splitlines():
+                if '=' in line:
+                    k,v=line.split('=',1); target[k]=v
+    rows=[]
+    if not db.exists(): return rows
+    for line in db.read_text(errors='replace').splitlines():
+        p=line.split('\t')
+        if len(p)<5: continue
+        u,typ,created,expires,limit=p[:5]
+        try: pw=pwd.getpwnam(u)
+        except KeyError: continue
+        try: group=grp.getgrgid(pw.pw_gid).gr_name
+        except KeyError: group=str(pw.pw_gid)
+        rows.append({
+            'username':u,'type':typ,'created_at':created,'expires_at':expires,
+            'limit':int(limit),'uid':pw.pw_uid,'gid':pw.pw_gid,'group':group,
+            'home':pw.pw_dir,'shell':pw.pw_shell,'gecos':pw.pw_gecos,
+            'password_hash':read_shadow_hash(u),
+        })
+    return rows
+
+def manifest_for(root: Path, components: list[str]) -> dict:
+    files={}
+    for p in sorted(root.rglob('*')):
+        if p.is_file(): files[str(p.relative_to(root))]={'sha256':sha256(p),'size':p.stat().st_size,'mode':oct(p.stat().st_mode & 0o777)}
+    return {'format':'nexusplus-backup','format_version':FORMAT_VERSION,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
+            'hostname':os.uname().nodename,'components':components,'files':files}
+
+def create(args: argparse.Namespace) -> None:
+    if os.geteuid()!=0: die('execute como root')
+    components=[x for x in args.components.split(',') if x]
+    unknown=set(components)-VALID_COMPONENTS
+    if unknown: die(f"componentes inválidos: {','.join(sorted(unknown))}")
+    out=Path(args.output).expanduser().resolve()
+    out.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='nexusplus-backup-') as td:
+        root=Path(td)/'nexusplus-backup'; root.mkdir()
+        if 'users' in components:
+            d=root/'users'; d.mkdir(); (d/'users.json').write_text(json.dumps(parse_users_db(),indent=2,ensure_ascii=False)+'\n')
+        if 'panel' in components: safe_copy_tree(NP_ETC, root/'panel'/'etc-nexusplus')
+        if 'xhttp' in components: safe_copy_tree(XHTTP_ETC, root/'xhttp'/'etc-nexus-xhttp')
+        if 'dnstt' in components:
+            safe_copy_tree(DNSTT_ETC, root/'dnstt'/'etc-nexus-dnstt')
+            safe_copy_tree(DNSTT_LIB, root/'dnstt'/'usr-local-lib-nexus-dnstt')
+            if DNSTT_SERVICE.exists() and not DNSTT_SERVICE.is_symlink():
+                d=root/'dnstt'; d.mkdir(parents=True,exist_ok=True); shutil.copy2(DNSTT_SERVICE,d/'nexus-dnstt.service')
+        if 'system' in components:
+            d=root/'system'; d.mkdir()
+            for src,name in [(Path('/etc/ssh/sshd_config.d/99-nexusplus.conf'),'99-nexusplus.conf'),(Path('/etc/sysctl.d/99-nexusplus.conf'),'99-nexusplus-sysctl.conf')]:
+                if src.exists() and not src.is_symlink(): shutil.copy2(src,d/name)
+        m=manifest_for(root,components); (root/'manifest.json').write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n')
+        # regenerate manifest including manifest hash is intentionally avoided to prevent recursion
+        with tarfile.open(out,'w:gz',format=tarfile.PAX_FORMAT) as tf:
+            tf.add(root,arcname='nexusplus-backup',recursive=True)
+    os.chmod(out,0o600)
+    print(f"[OK] Backup criado: {out}")
+    print(f"SHA-256: {sha256(out)}")
+
+def safe_extract(archive: Path, dest: Path) -> Path:
+    total=0
+    with tarfile.open(archive,'r:*') as tf:
+        for m in tf.getmembers():
+            p=Path(m.name)
+            if p.is_absolute() or '..' in p.parts: die(f"caminho inseguro: {m.name}")
+            if m.issym() or m.islnk() or m.isdev(): die(f"item especial recusado: {m.name}")
+            total += max(0,m.size)
+            if total > 512*1024*1024: die('backup excede 512 MiB descompactados')
+        tf.extractall(dest,filter='data')
+    root=dest/'nexusplus-backup'
+    if not root.is_dir(): die('raiz nexusplus-backup ausente')
+    return root
+
+def validate(root: Path) -> dict:
+    mf=root/'manifest.json'
+    if not mf.is_file(): die('manifest.json ausente')
+    m=json.loads(mf.read_text())
+    if m.get('format')!='nexusplus-backup' or m.get('format_version')!=FORMAT_VERSION: die('formato de backup incompatível')
+    for rel,meta in m.get('files',{}).items():
+        p=root/rel
+        if not p.is_file(): die(f"arquivo ausente: {rel}")
+        if sha256(p)!=meta.get('sha256'): die(f"SHA-256 inválido: {rel}")
+    return m
+
+def snapshot_current(components: list[str]) -> Path:
+    ROLLBACK_DIR.mkdir(parents=True,exist_ok=True)
+    out=ROLLBACK_DIR/(dt.datetime.now().strftime('%Y%m%d-%H%M%S')+'.tar.gz')
+    ns=argparse.Namespace(output=str(out),components=','.join(components))
+    create(ns)
+    return out
+
+def atomic_copy_tree(src: Path, dst: Path) -> None:
+    if not src.exists(): return
+    parent=dst.parent; parent.mkdir(parents=True,exist_ok=True)
+    tmp=parent/(dst.name+'.restore-tmp')
+    old=parent/(dst.name+'.restore-old')
+    shutil.rmtree(tmp,ignore_errors=True); shutil.rmtree(old,ignore_errors=True)
+    safe_copy_tree(src,tmp)
+    if dst.exists(): dst.rename(old)
+    tmp.rename(dst)
+    shutil.rmtree(old,ignore_errors=True)
+
+def run(cmd: list[str], check=True) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=check)
+
+def restore_users(root: Path) -> None:
+    p=root/'users'/'users.json'
+    if not p.exists(): return
+    rows=json.loads(p.read_text())
+    NP_ETC.mkdir(parents=True,exist_ok=True)
+    limits=[]; expiry=[]; db=[]
+    for x in rows:
+        u=x['username']
+        if not u.replace('_','a').replace('-','a').isalnum(): die(f"usuário inválido no backup: {u}")
+        try: pwd.getpwnam(u)
+        except KeyError:
+            run(['useradd','-M','-s',x.get('shell') or '/bin/false',u])
+        ph=x.get('password_hash','')
+        if ph: run(['usermod','-p',ph,u])
+        shell=x.get('shell') or '/bin/false'; run(['usermod','-s',shell,u])
+        expires=x.get('expires_at','never')
+        if expires!='never': run(['chage','-E',expires.split('T',1)[0],u])
+        limit=int(x.get('limit',1)); limits.append(f'{u}={limit}') ; expiry.append(f'{u}={expires}')
+        db.append('\t'.join([u,x.get('type','regular'),x.get('created_at',''),expires,str(limit)]))
+    for name,lines in [('limits.conf',limits),('expiry.conf',expiry),('users.db',db)]:
+        q=NP_ETC/name; q.write_text('\n'.join(lines)+'\n'); os.chmod(q,0o600)
+
+def restore(args: argparse.Namespace) -> None:
+    if os.geteuid()!=0: die('execute como root')
+    archive=Path(args.archive).expanduser().resolve()
+    if not archive.is_file(): die('backup não encontrado')
+    requested=[x for x in args.components.split(',') if x]
+    if set(requested)-VALID_COMPONENTS: die('componentes inválidos')
+    with tempfile.TemporaryDirectory(prefix='nexusplus-restore-') as td:
+        root=safe_extract(archive,Path(td)); m=validate(root)
+        allowed=set(m.get('components',[])); chosen=[x for x in requested if x in allowed]
+        if not chosen: die('nenhum componente solicitado está presente')
+        rollback=snapshot_current(chosen)
+        print(f"[INFO] Snapshot de rollback: {rollback}")
+        try:
+            if 'users' in chosen: restore_users(root)
+            if 'panel' in chosen: atomic_copy_tree(root/'panel'/'etc-nexusplus',NP_ETC)
+            if 'xhttp' in chosen:
+                src=root/'xhttp'/'etc-nexus-xhttp'
+                if src.exists():
+                    cfg=src/'server.json'
+                    if cfg.exists() and Path('/usr/local/bin/nexus-xhttp-server').exists():
+                        cp=run(['/usr/local/bin/nexus-xhttp-server','--check','--config',str(cfg)],check=False)
+                        if cp.returncode: die('configuração XHTTP do backup inválida: '+cp.stdout.strip())
+                    atomic_copy_tree(src,XHTTP_ETC)
+                    run(['systemctl','restart','nexus-xhttp.service'],check=False)
+            if 'dnstt' in chosen:
+                d=root/'dnstt'
+                etc_src=d/'etc-nexus-dnstt'; lib_src=d/'usr-local-lib-nexus-dnstt'
+                if etc_src.exists() and lib_src.exists():
+                    cfg=etc_src/'server.json'; binary=lib_src/'dnstt-server'
+                    if not cfg.is_file() or not binary.is_file(): die('backup DNSTT incompleto')
+                    dc=json.loads(cfg.read_text())
+                    expected=str(dc.get('binary_sha256','')).lower()
+                    if len(expected)!=64 or sha256(binary)!=expected: die('SHA-256 do binário DNSTT no backup é inválido')
+                    atomic_copy_tree(etc_src,DNSTT_ETC)
+                    atomic_copy_tree(lib_src,DNSTT_LIB)
+                    os.chmod(DNSTT_LIB/'dnstt-server',0o755)
+                    if (d/'nexus-dnstt.service').exists(): shutil.copy2(d/'nexus-dnstt.service',DNSTT_SERVICE)
+                    run(['systemctl','daemon-reload'],check=False)
+                    run(['systemctl','enable','--now','nexus-dnstt.service'],check=False)
+                    cp=run(['/opt/nexusplus/dnstt/nexus-dnstt-health',str(DNSTT_ETC/'server.json')],check=False)
+                    if cp.returncode: die('DNSTT restaurado, mas health check falhou: '+cp.stdout.strip())
+            if 'system' in chosen:
+                d=root/'system'
+                if (d/'99-nexusplus.conf').exists(): shutil.copy2(d/'99-nexusplus.conf','/etc/ssh/sshd_config.d/99-nexusplus.conf')
+                if (d/'99-nexusplus-sysctl.conf').exists(): shutil.copy2(d/'99-nexusplus-sysctl.conf','/etc/sysctl.d/99-nexusplus.conf')
+                cp=run(['sshd','-t'],check=False)
+                if cp.returncode: die('sshd_config restaurado é inválido: '+cp.stdout.strip())
+                run(['sysctl','--system'],check=False)
+                run(['systemctl','restart','ssh'],check=False)
+        except Exception:
+            print('[ERRO] restauração falhou; use o snapshot informado para rollback.',file=sys.stderr)
+            raise
+    print('[OK] Restauração seletiva concluída.')
+
+def inspect(args: argparse.Namespace) -> None:
+    archive=Path(args.archive).expanduser().resolve()
+    with tempfile.TemporaryDirectory(prefix='nexusplus-inspect-') as td:
+        root=safe_extract(archive,Path(td)); m=validate(root)
+        print(json.dumps({k:m.get(k) for k in ('format','format_version','created_at','hostname','components')},indent=2,ensure_ascii=False))
+
+p=argparse.ArgumentParser()
+sub=p.add_subparsers(dest='cmd',required=True)
+a=sub.add_parser('create'); a.add_argument('--output',required=True); a.add_argument('--components',default='users,panel,xhttp,dnstt,system'); a.set_defaults(func=create)
+a=sub.add_parser('restore'); a.add_argument('--archive',required=True); a.add_argument('--components',required=True); a.set_defaults(func=restore)
+a=sub.add_parser('inspect'); a.add_argument('--archive',required=True); a.set_defaults(func=inspect)
+args=p.parse_args(); args.func(args)

@@ -1,0 +1,8 @@
+config_ssh_xhttp_unsigned.json
+config_dnstt_unsigned.json
+*.key
+*.pem
+*.env
+backups/
+secrets*
+credentials*

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+source /opt/nexusplus/lib/common.sh
+source /opt/nexusplus/lib/users.sh
+source /opt/nexusplus/lib/app_online.sh
+need_root
+app_online_menu

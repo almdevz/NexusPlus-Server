@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+source /opt/nexusplus/lib/common.sh
+source /opt/nexusplus/lib/users.sh
+source /opt/nexusplus/lib/backup.sh
+source /opt/nexusplus/lib/system.sh
+source /opt/nexusplus/lib/xhttp.sh
+source /opt/nexusplus/lib/app_online.sh
+source /opt/nexusplus/lib/dnstt.sh
+source /opt/nexusplus/lib/legacy.sh
+source /opt/nexusplus/lib/update.sh
+need_root
+while true; do
+ header "NEXUSPLUS SERVER MANAGER v$NP_VERSION"
+ echo ' 1) Criar usuário SSH'
+ echo ' 2) Criar usuário teste persistente'
+ echo ' 3) Alterar senha'
+ echo ' 4) Alterar/aplicar limite'
+ echo ' 5) Remover usuário'
+ echo ' 6) Listar usuários'
+ echo ' 7) Usuários online'
+ echo ' 8) APP Online — protocolos e portas'
+ echo ' 9) Encerrar conexões de usuário'
+ echo '10) Limpar expirados'
+ echo '11) Backup seletivo'
+ echo '12) Restaurar backup seletivo'
+ echo '13) Status do servidor'
+ echo '14) Reiniciar serviços'
+ echo '15) Otimização de rede'
+ echo '16) Nexus SSH_XHTTP'
+ echo '17) Nexus DNSTT / SlowDNS opcional'
+ echo '18) Módulos legados opcionais'
+ echo '19) Update / rollback do painel'
+ echo ' 0) Sair'
+ read -r -p 'Opção: ' o
+ case $o in
+ 1)create_user;;2)create_trial;;3)change_password;;4)change_limit;;5)delete_user;;6)list_users;;7)online_users;;8)app_online_menu;;9)kill_user;;10)clean_expired;;11)backup_create;;12)backup_restore;;13)system_status;;14)restart_services;;15)optimize_network;;16)xhttp_menu;;17)dnstt_menu;;18)legacy_menu;;19)update_menu;;0)exit 0;;*)warn 'Opção inválida';sleep 1;;esac
+done

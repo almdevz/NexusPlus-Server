@@ -1,0 +1,9 @@
+[Unit]
+Description=NexusPlus persistent user expiry cleanup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/nexusplus/bin/nexus-expiry --quiet
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,0 +1,9 @@
+[Unit]
+Description=NexusPlus SSH connection limit reconciliation
+After=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/nexusplus/bin/nexus-limit-reconcile
+NoNewPrivileges=true
+PrivateTmp=true

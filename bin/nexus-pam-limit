@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# PAM session gate: reserves one persistent runtime slot per SSH session.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LIMITS=/etc/nexusplus/limits.conf
+RUN=/run/nexusplus/sessions
+LOCK=/run/nexusplus/pam-limit.lock
+u=${PAM_USER:-}
+type=${PAM_TYPE:-}
+
+[[ "$type" == open_session || "$type" == close_session ]] || exit 0
+[[ "$u" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || exit 0
+[[ -r "$LIMITS" ]] || exit 0
+limit=$(awk -F= -v u="$u" '$1==u{print $2;exit}' "$LIMITS")
+[[ "$limit" =~ ^[0-9]+$ && "$limit" -ge 1 ]] || exit 0
+uid=$(id -u "$u" 2>/dev/null || echo 0)
+(( uid >= 1000 && uid < 60000 )) || exit 0
+install -d -m 0755 /run/nexusplus "$RUN" "$RUN/$u"
+exec 9>"$LOCK"
+flock -x 9
+
+clean_stale(){
+  local f pid start current
+  for f in "$RUN/$u"/*.session; do
+    [[ -f "$f" ]] || continue
+    IFS=$'\t' read -r pid start _ < "$f" || true
+    if [[ ! "$pid" =~ ^[0-9]+$ || ! -r "/proc/$pid/stat" ]]; then rm -f "$f"; continue; fi
+    current=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)
+    [[ "$current" == "$start" ]] || rm -f "$f"
+  done
+}
+
+pid=${PPID:-$$}
+start=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || echo 0)
+slot="$RUN/$u/${pid}-${start}.session"
+clean_stale
+
+if [[ "$type" == close_session ]]; then
+  rm -f "$slot" "$RUN/$u/${pid}-"*.session 2>/dev/null || true
+  exit 0
+fi
+
+count=$(find "$RUN/$u" -maxdepth 1 -type f -name '*.session' 2>/dev/null | wc -l)
+if (( count >= limit )); then
+  logger -t nexusplus-limit "denied user=$u remote=${PAM_RHOST:-unknown} active=$count limit=$limit" 2>/dev/null || true
+  exit 1
+fi
+printf '%s\t%s\t%s\n' "$pid" "$start" "${PAM_RHOST:-unknown}" > "$slot"
+chmod 0600 "$slot"
+logger -t nexusplus-limit "opened user=$u remote=${PAM_RHOST:-unknown} active=$((count+1)) limit=$limit" 2>/dev/null || true
+exit 0

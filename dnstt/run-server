@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+CONFIG=${DNSTT_CONFIG:-/etc/nexus-dnstt/server.json}
+[[ -r "$CONFIG" ]] || { echo "Configuração ausente: $CONFIG" >&2; exit 1; }
+for c in jq sha256sum; do command -v "$c" >/dev/null || { echo "$c ausente" >&2; exit 1; }; done
+BIN=$(jq -r '.binary_path // "/usr/local/lib/nexus-dnstt/dnstt-server"' "$CONFIG")
+LISTEN=$(jq -r '.listen_udp // empty' "$CONFIG")
+DOMAIN=$(jq -r '.tunnel_domain // empty' "$CONFIG")
+TARGET=$(jq -r '.target // empty' "$CONFIG")
+PRIV=$(jq -r '.private_key_file // "/etc/nexus-dnstt/server.key"' "$CONFIG")
+EXPECTED=$(jq -r '.binary_sha256 // empty' "$CONFIG" | tr 'A-F' 'a-f')
+[[ -x "$BIN" ]] || { echo "Binário DNSTT ausente/não executável: $BIN" >&2; exit 1; }
+[[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] || { echo 'binary_sha256 inválido' >&2; exit 1; }
+ACTUAL=$(sha256sum "$BIN" | awk '{print tolower($1)}')
+[[ "$ACTUAL" == "$EXPECTED" ]] || { echo 'SHA-256 do binário DNSTT diverge da configuração' >&2; exit 1; }
+[[ -n "$LISTEN" && -n "$DOMAIN" && -n "$TARGET" && -r "$PRIV" ]] || { echo 'Configuração DNSTT incompleta' >&2; exit 1; }
+exec "$BIN" -udp "$LISTEN" -privkey-file "$PRIV" "$DOMAIN" "$TARGET"

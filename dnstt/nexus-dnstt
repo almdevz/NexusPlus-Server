@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+CMD=${1:-status}; shift || true
+CFG=/etc/nexus-dnstt/server.json
+case "$CMD" in
+ status) systemctl status nexus-dnstt.service --no-pager || true ;;
+ health) /opt/nexusplus/dnstt/nexus-dnstt-health "$CFG" ;;
+ logs) exec journalctl -u nexus-dnstt.service -f ;;
+ restart) systemctl restart nexus-dnstt.service; sleep 1; /opt/nexusplus/dnstt/nexus-dnstt-health "$CFG" ;;
+ show-client)
+   [[ -r "$CFG" ]] || { echo 'DNSTT não configurado.' >&2; exit 1; }
+   jq -n --arg domain "$(jq -r .tunnel_domain "$CFG")" --arg public_key "$(cat "$(jq -r .public_key_file "$CFG")")" --arg dns "$(jq -r '.client_dns_server // "1.1.1.1:53"' "$CFG")" --argjson mtu "$(jq -r '.client_mtu // 1232' "$CFG")" '{connection_type:"dnstt",dnstt_dns_server:$dns,dnstt_domain:$domain,dnstt_public_key:$public_key,dnstt_local_port:7001,dnstt_mtu:$mtu}'
+   ;;
+ generate-config) exec /opt/nexusplus/dnstt/nexus-dnstt-generate-config "$@" ;;
+ backup)
+   out=${1:-/root/nexus-dnstt-backup-$(date +%Y%m%d-%H%M%S).tar.gz}
+   exec /opt/nexusplus/bin/nexus-backup create --output "$out" --components dnstt
+   ;;
+ rollback)
+   archive=${1:-}; [[ -f "$archive" ]] || { echo 'Uso: nexus-dnstt rollback ARQUIVO.tar.gz' >&2; exit 2; }
+   exec /opt/nexusplus/bin/nexus-backup restore --archive "$archive" --components dnstt
+   ;;
+ uninstall)
+   [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Execute como root.' >&2; exit 1; }
+   systemctl disable --now nexus-dnstt.service 2>/dev/null || true
+   /opt/nexusplus/dnstt/nexus-dnstt-firewall remove 2>/dev/null || true
+   rm -f /etc/systemd/system/nexus-dnstt.service /usr/local/lib/nexus-dnstt/dnstt-server
+   systemctl daemon-reload
+   read -r -p 'Remover configuração, chaves e histórico /etc/nexus-dnstt /var/lib/nexus-dnstt? [s/N]: ' a
+   [[ "$a" =~ ^[Ss]$ ]] && rm -rf /etc/nexus-dnstt /var/lib/nexus-dnstt
+   id nexus-dnstt >/dev/null 2>&1 && userdel nexus-dnstt 2>/dev/null || true
+   echo 'Módulo DNSTT removido.'
+   ;;
+ *) echo 'Uso: nexus-dnstt status|health|logs|restart|show-client|generate-config|backup|rollback|uninstall' >&2; exit 2;;
+esac
