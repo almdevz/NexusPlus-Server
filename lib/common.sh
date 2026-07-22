@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+# Interactive manager: do not use errexit here. Optional commands such as grep,
+# awk, systemctl and reads may legitimately return non-zero before a service is
+# installed. Each destructive/configuration action performs its own validation.
+set -uo pipefail
 IFS=$'\n\t'
 NP_ROOT=/opt/nexusplus
 NP_ETC=/etc/nexusplus
@@ -18,6 +21,6 @@ valid_user(){ [[ ${1:-} =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; }
 header(){ clear; echo -e "${CYAN}╔══════════════════════════════════════════════╗"; printf '║ %-44s ║\n' "$1"; echo -e "╚══════════════════════════════════════════════╝${NC}"; }
 service_exists(){ systemctl cat "$1" >/dev/null 2>&1; }
 service_active(){ systemctl is-active --quiet "$1" 2>/dev/null; }
-port_owner(){ ss -Hltnup 2>/dev/null | awk -v p=":$1" '$4 ~ p"$" || $5 ~ p"$" {print; exit}'; }
+port_owner(){ ss -Hltnup 2>/dev/null | awk -v p=":$1" '$4 ~ p"$" || $5 ~ p"$" {print; exit}' || true; }
 require_free_port(){ local p=$1 ignore=${2:-}; valid_port "$p" || { warn 'Porta inválida.'; return 1; }; local x; x=$(port_owner "$p"); [[ -z "$x" || "$x" == *"$ignore"* ]] || { warn "Porta $p ocupada: $x"; return 1; }; }
 atomic_write(){ local dest=$1; local tmp; tmp=$(mktemp "${dest}.XXXX"); cat >"$tmp"; chmod --reference="$dest" "$tmp" 2>/dev/null || true; mv -f "$tmp" "$dest"; }
