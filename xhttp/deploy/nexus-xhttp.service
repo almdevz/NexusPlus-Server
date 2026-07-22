@@ -1,0 +1,22 @@
+[Unit]
+Description=Nexus XHTTP Server
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus-xhttp
+Group=nexus-xhttp
+ExecStart=/usr/local/bin/nexus-xhttp-server --config /etc/nexus-xhttp/server.json
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/nexus-xhttp
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+source /opt/nexusplus/lib/common.sh
+source /opt/nexusplus/lib/users.sh
+source /opt/nexusplus/lib/backup.sh
+source /opt/nexusplus/lib/system.sh
+source /opt/nexusplus/lib/xhttp.sh
+source /opt/nexusplus/lib/app_online.sh
+source /opt/nexusplus/lib/connections.sh
+source /opt/nexusplus/lib/features.sh
+need_root
+while true; do
+ header 'NEXUSPLUS SERVER MANAGER v1.4'
+ echo '[01] • CRIAR USUÁRIO                 [11] • SPEEDTEST'
+ echo '[02] • CRIAR USUÁRIO TESTE           [12] • BANNER'
+ echo '[03] • REMOVER USUÁRIO               [13] • TRÁFEGO'
+ echo '[04] • MONITOR ONLINE                [14] • OTIMIZAR'
+ echo '[05] • MUDAR DATA                    [15] • BACKUP / RESTORE'
+ echo '[06] • ALTERAR LIMITE                [16] • MEMÓRIA VIRTUAL'
+ echo '[07] • MUDAR SENHA                   [17] • LIMITADOR'
+ echo '[08] • REMOVER EXPIRADOS             [18] • BADVPN UDPGW'
+ echo '[09] • RELATÓRIO DE USUÁRIOS         [19] • ONLINE APP'
+ echo '[10] • MODO DE CONEXÃO               [20] • INFO VPS'
+ echo '[21] • NEXUS SSH_XHTTP               [22] • SAÚDE / DIAGNÓSTICO'
+ echo '[00] • SAIR'
+ read -r -p 'O QUE DESEJA FAZER?: ' o
+ case $o in
+ 1|01)create_user;;2|02)create_trial;;3|03)delete_user;;4|04)online_users;;5|05)change_expiry;;6|06)change_limit;;7|07)change_password;;8|08)clean_expired;;9|09)user_report;;10)connection_menu;;11)speedtest_run;;12)banner_manage;;13)traffic_monitor;;14)optimize_network;;15)backup_menu;;16)swap_manage;;17)limiter_status;;18)badvpn_manage;;19)app_online_menu;;20)info_vps;;21)xhttp_menu;;22)health_menu;;0|00)exit 0;;*)warn 'Opção inválida';sleep 1;;esac
+done

@@ -1,0 +1,4 @@
+b03b2f104bc5e5a794bcc9f34dfa5481786edbac5b89ab529c83263bfeedb268  nexus-xhttp-server-linux-amd64
+cc2afd4a987c82eb55e4ce325b117af54d3b0db1ebd5a86cd404a478e29d117c  nexus-xhttp-server-linux-arm64
+593a46a0aa4598e40b380613fec1072383e897c0599c35029af1558c7a46c4ca  nexus-xhttp-client-linux-amd64
+8c15a326d34384b11cd9a58796f0bda2903c62abccb273ce34f3f09f347d456a  nexus-xhttp-client-linux-arm64

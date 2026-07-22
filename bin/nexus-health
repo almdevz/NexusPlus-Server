@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -u
+MODE=${1:-all}
+pass=0; fail=0
+check(){ local name=$1; shift; if "$@" >/dev/null 2>&1; then printf '[OK]   %s\n' "$name"; pass=$((pass+1)); else printf '[FALHA] %s\n' "$name"; fail=$((fail+1)); fi; }
+check_port(){ local p=$1; ss -Hltnup 2>/dev/null | grep -qE "[:.]${p}[[:space:]]"; }
+if [[ $MODE == all || $MODE == system ]]; then
+ check 'OpenSSH configuração' sshd -t
+ check 'OpenSSH ativo' systemctl is-active ssh
+ check 'Timer de expiração' systemctl is-active nexusplus-expiry.timer
+ check 'Timer de limite' systemctl is-active nexusplus-limiter.timer
+ check 'Espaço em disco disponível' bash -c '[[ $(df -P / | awk "NR==2{print \$5}" | tr -d "%") -lt 95 ]]'
+fi
+if [[ $MODE == all || $MODE == xhttp ]]; then
+ if systemctl cat nexus-xhttp >/dev/null 2>&1; then
+  check 'Nexus XHTTP ativo' systemctl is-active nexus-xhttp
+  if [[ -x /usr/local/bin/nexus-xhttp-server && -f /etc/nexus-xhttp/server.json ]]; then check 'Nexus XHTTP configuração' /usr/local/bin/nexus-xhttp-server --config /etc/nexus-xhttp/server.json --check; fi
+  port=$(jq -r '.listen_port // empty' /etc/nexus-xhttp/server.json 2>/dev/null); [[ -n ${port:-} ]] && check "Porta XHTTP $port" check_port "$port"
+ else printf '[INFO] Nexus XHTTP não instalado\n'; fi
+fi
+printf '\nResultado: %d OK, %d falha(s).\n' "$pass" "$fail"
+((fail==0))
