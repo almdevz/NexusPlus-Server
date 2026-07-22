@@ -9,4 +9,4 @@ apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates
 GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$REF" "https://github.com/${REPO}.git" "$TMP/repo"
 cd "$TMP/repo"
-exec ./install.sh
+exec bash ./install.sh
