@@ -3,6 +3,7 @@
 stunnel_cfg=/etc/stunnel/stunnel.conf
 stunnel_cert=/etc/stunnel/cert.pem
 stunnel_key=/etc/stunnel/key.pem
+stunnel_pid=/run/stunnel4/stunnel.pid
 
 stunnel_section_value(){
   local section=$1 key=$2
@@ -14,8 +15,19 @@ stunnel_section_value(){
   ' "$stunnel_cfg" 2>/dev/null || true
 }
 
+stunnel_prepare_runtime(){
+  install -d -m 0755 /etc/stunnel /run/stunnel4
+  if [[ -f /etc/default/stunnel4 ]]; then
+    if grep -q '^ENABLED=' /etc/default/stunnel4; then
+      sed -i 's/^ENABLED=.*/ENABLED=1/' /etc/default/stunnel4
+    else
+      printf '\nENABLED=1\n' >> /etc/default/stunnel4
+    fi
+  fi
+}
+
 stunnel_prepare_cert(){
-  install -d -m 0755 /etc/stunnel
+  stunnel_prepare_runtime
 
   if [[ -s /etc/nexusplus/tls/fullchain.pem && -s /etc/nexusplus/tls/privkey.pem ]]; then
     cp -f /etc/nexusplus/tls/fullchain.pem "$stunnel_cert"
@@ -35,6 +47,7 @@ stunnel_prepare_cert(){
 stunnel_write_config(){
   local direct_port=$1 direct_target=$2 proxy_port=$3 proxy_target=$4
   local tmp backup
+  stunnel_prepare_runtime
   tmp=$(mktemp /etc/stunnel/stunnel.conf.XXXXXX)
   backup="${stunnel_cfg}.backup-$(date +%Y%m%d-%H%M%S)"
 
@@ -45,7 +58,7 @@ cert = $stunnel_cert
 key = $stunnel_key
 client = no
 foreground = no
-pid = /run/stunnel4/nexusplus.pid
+pid = $stunnel_pid
 
 [ssl_direto]
 accept = 0.0.0.0:$direct_port
@@ -58,7 +71,7 @@ connect = $proxy_target
 TIMEOUTclose = 0
 EOF
 
-  if /usr/bin/stunnel4 "$tmp" -fd 0 </dev/null >/dev/null 2>&1; then
+  if /usr/bin/stunnel4 "$tmp" -version >/dev/null 2>&1; then
     mv -f "$tmp" "$stunnel_cfg"
     return 0
   fi
@@ -69,6 +82,8 @@ EOF
 }
 
 stunnel_restart(){
+  stunnel_prepare_runtime
+  rm -f "$stunnel_pid"
   systemctl daemon-reload
   systemctl enable stunnel4 >/dev/null 2>&1 || true
   systemctl restart stunnel4
@@ -156,7 +171,7 @@ stunnel_manage(){
       5)
         systemctl disable --now stunnel4 2>/dev/null || true
         [[ -f "$stunnel_cfg" ]] && cp -a "$stunnel_cfg" "${stunnel_cfg}.backup-$(date +%Y%m%d-%H%M%S)"
-        rm -f "$stunnel_cfg"
+        rm -f "$stunnel_cfg" "$stunnel_pid"
         ok 'Configuração SSL removida; certificados foram preservados.'
         pause
         ;;
